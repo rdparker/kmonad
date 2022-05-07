@@ -26,6 +26,7 @@ import KMonad.Keyboard
 import KMonad.Keyboard.IO
 import KMonad.Keyboard.IO.Windows.Types
 
+import Prelude (print)
 
 --------------------------------------------------------------------------------
 
@@ -58,7 +59,8 @@ skClose sk = do
 --
 -- NOTE: This can throw an error if event-conversion fails.
 skSend :: HasLogFunc e => SKSink -> KeyEvent -> RIO e ()
-skSend sk e = either throwIO go $ toWinKeyEvent e
+skSend sk e = either putErr go $ toWinKeyEvent e
   where go e' = liftIO $ do
           poke (sk^.buffer) e'
           sendKey $ sk^.buffer
+        putErr e' = liftIO $ print e'
