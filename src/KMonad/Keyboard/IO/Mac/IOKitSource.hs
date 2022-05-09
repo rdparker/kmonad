@@ -14,6 +14,8 @@ import KMonad.Keyboard
 import KMonad.Keyboard.IO
 import KMonad.Keyboard.IO.Mac.Types
 
+import Prelude (print)
+
 --------------------------------------------------------------------------------
 
 -- | Use the mac c-api to `grab` a keyboard
@@ -80,4 +82,7 @@ iokitRead b = do
     peek $ b^.buffer
   case fromMacKeyEvent we of
     Nothing -> iokitRead b
-    Just e  -> either throwIO pure e
+    Just e  -> either errRetry pure e
+  where errRetry e = do
+          liftIO $ print e
+          iokitRead b
