@@ -129,7 +129,7 @@ joinConfigIO es = case runJ joinConfig $ defJCfg es of
 
 -- | Extract anything matching a particular prism from a list
 extract :: Prism' a b -> [a] -> [b]
-extract p = catMaybes . map (preview p)
+extract p = mapMaybe (preview p)
 
 data SingletonError
   = None
@@ -144,14 +144,14 @@ onlyOne xs = case uncons xs of
 
 -- | Take the one and only block matching the prism from the expressions
 oneBlock :: Text -> Prism' KExpr a -> J a
-oneBlock t l = onlyOne . extract l <$> view kes >>= \case
+oneBlock t l = (view kes <&> (extract l >>> onlyOne)) >>= \case
   Right x        -> pure x
   Left None      -> throwError $ MissingBlock t
   Left Duplicate -> throwError $ DuplicateBlock t
 
 -- | Update the JCfg and then run the entire joining process
 joinConfig :: J CfgToken
-joinConfig = getOverride >>= \cfg -> (local (const cfg) joinConfig')
+joinConfig = getOverride >>= \cfg -> local (const cfg) joinConfig'
 
 -- | Join an entire 'CfgToken' from the current list of 'KExpr'.
 joinConfig' :: J CfgToken
@@ -166,8 +166,8 @@ joinConfig' = do
   al <- getAllow
 
   -- Extract the other blocks and join them into a keymap
-  let als = extract _KDefAlias    $ es
-  let lys = extract _KDefLayer    $ es
+  let als = extract _KDefAlias es
+  let lys = extract _KDefLayer es
   src      <- oneBlock "defsrc" _KDefSrc
   (km, fl) <- joinKeymap src als lys
 
@@ -260,7 +260,7 @@ pickOutput :: OToken -> J (LogFunc -> IO (Acquire KeySink))
 pickOutput (KUinputSink t init) = pure $ runLF (uinputSink cfg)
   where cfg = defUinputCfg { _keyboardName = T.unpack t
                            , _postInit     = T.unpack <$> init }
-pickOutput KSendEventSink       = throwError $ InvalidOS "SendEventSink"
+pickOutput (KSendEventSink _)   = throwError $ InvalidOS "SendEventSink"
 pickOutput KKextSink            = throwError $ InvalidOS "KextSink"
 
 #endif
@@ -275,9 +275,9 @@ pickInput (KIOKitSource _)    = throwError $ InvalidOS "IOKitSource"
 
 -- | The Windows correspondence between OToken and actual code
 pickOutput :: OToken -> J (LogFunc -> IO (Acquire KeySink))
-pickOutput KSendEventSink    = pure $ runLF sendEventKeySink
-pickOutput (KUinputSink _ _) = throwError $ InvalidOS "UinputSink"
-pickOutput KKextSink         = throwError $ InvalidOS "KextSink"
+pickOutput (KSendEventSink di) = pure $ runLF (sendEventKeySink di)
+pickOutput (KUinputSink _ _)   = throwError $ InvalidOS "UinputSink"
+pickOutput KKextSink           = throwError $ InvalidOS "KextSink"
 
 #endif
 
@@ -293,7 +293,7 @@ pickInput KLowLevelHookSource = throwError $ InvalidOS "LowLevelHookSource"
 pickOutput :: OToken -> J (LogFunc -> IO (Acquire KeySink))
 pickOutput KKextSink            = pure $ runLF kextSink
 pickOutput (KUinputSink _ _)    = throwError $ InvalidOS "UinputSink"
-pickOutput KSendEventSink       = throwError $ InvalidOS "SendEventSink"
+pickOutput (KSendEventSink _)   = throwError $ InvalidOS "SendEventSink"
 
 #endif
 
@@ -310,7 +310,7 @@ joinAliases :: LNames -> [DefAlias] -> J Aliases
 joinAliases ns als = foldM f M.empty $ concat als
   where f mp (t, b) = if t `M.member` mp
           then throwError $ DuplicateAlias t
-          else flip (M.insert t) mp <$> (unnest $ joinButton ns mp b)
+          else flip (M.insert t) mp <$> unnest (joinButton ns mp b)
 
 --------------------------------------------------------------------------------
 -- $but
@@ -318,7 +318,7 @@ joinAliases ns als = foldM f M.empty $ concat als
 -- | Turn 'Nothing's (caused by joining a KTrans) into the appropriate error.
 -- KTrans buttons may only occur in 'DefLayer' definitions.
 unnest :: J (Maybe Button) -> J Button
-unnest = join . fmap (maybe (throwError NestedTrans) (pure . id))
+unnest = (maybe (throwError NestedTrans) pure =<<)
 
 -- | Turn a button token into an actual KMonad `Button` value
 joinButton :: LNames -> Aliases -> DefButton -> J (Maybe Button)
@@ -338,6 +338,8 @@ joinButton ns als =
 
     -- Various simple buttons
     KEmit c -> ret $ emitB c
+    KPressOnly c -> ret $ pressOnly c
+    KReleaseOnly c -> ret $ releaseOnly c
     KCommand pr mbR -> ret $ cmdButton pr mbR
     KLayerToggle t -> if t `elem` ns
       then ret $ layerToggle t
@@ -363,6 +365,7 @@ joinButton ns als =
                              c   <- view cmpKey
                              jst $ tapMacro . (c:) <$> isps bs csd
     KTapMacro bs mbD   -> jst $ tapMacro           <$> isps bs mbD
+    KBeforeAfterNext b a -> jst $ beforeAfterNext <$> go b <*> go a
     KTapMacroRelease bs mbD ->
       jst $ tapMacroRelease           <$> isps bs mbD
     KAround o i        -> jst $ around             <$> go o <*> go i
@@ -373,6 +376,7 @@ joinButton ns als =
     KTapNextRelease t h -> jst $ tapNextRelease    <$> go t <*> go h
     KTapHoldNextRelease ms t h mtb
       -> jst $ tapHoldNextRelease (fi ms) <$> go t <*> go h <*> traverse go mtb
+    KTapNextPress t h  -> jst $ tapNextPress       <$> go t <*> go h
     KAroundNext b      -> jst $ aroundNext         <$> go b
     KAroundNextSingle b -> jst $ aroundNextSingle <$> go b
     KAroundNextTimeout ms b t -> jst $ aroundNextTimeout (fi ms) <$> go b <*> go t
@@ -399,7 +403,7 @@ joinKeymap src als lys = do
   als' <- joinAliases nms als               -- Join aliases into 1 hashmap
   lys' <- mapM (joinLayer als' nms src) lys -- Join all layers
   -- Return the layerstack and the name of the first layer
-  pure $ (L.mkLayerStack lys', _layerName . fromJust . headMaybe $ lys)
+  pure (L.mkLayerStack lys', _layerName . fromJust . headMaybe $ lys)
 
 -- | Check and join 1 deflayer.
 joinLayer ::

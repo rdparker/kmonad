@@ -27,7 +27,7 @@ import KMonad.Args.Types
 loadConfig :: HasLogFunc e => Cmd -> RIO e AppCfg
 loadConfig cmd = do
 
-  tks <- loadTokens (cmd^.cfgFile)      -- This can throw a PErrors
+  tks <- loadTokens (cmd^.cfgFile)      -- This can throw a ParseError
   cgt <- joinConfigIO (joinCLI cmd tks) -- This can throw a JoinError
 
   -- Try loading the sink and src
@@ -76,7 +76,7 @@ joinCLI cmd = traverse._KDefCfg %~ insertCliOption cliList
   insertCliOption cliSettings cfgSettings =
     foldr (\s cfgs ->
              if   s `elem` cfgs
-             then foldr (\x xs -> (if s == x then s else x) : xs) [] cfgs
+             then map (\x -> if s == x then s else x) cfgs
              else s : cfgs)
           cfgSettings
           cliSettings
