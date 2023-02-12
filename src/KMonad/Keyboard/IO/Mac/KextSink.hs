@@ -12,11 +12,12 @@ import Foreign.Storable
 import KMonad.Keyboard
 import KMonad.Keyboard.IO
 import KMonad.Keyboard.IO.Mac.Types
+import Prelude (print)
 
 foreign import ccall "send_key"
   send_key :: Ptr MacKeyEvent -> IO ()
 
-data EvBuf = EvBuf
+newtype EvBuf = EvBuf
   { _buffer :: Ptr MacKeyEvent -- ^ The pointer we write events to
   }
 makeClassy ''EvBuf
@@ -40,7 +41,8 @@ skClose sk = do
 --
 -- NOTE: This can throw an error if event-conversion fails.
 skSend :: HasLogFunc e => EvBuf -> KeyEvent -> RIO e ()
-skSend sk e = either throwIO go $ toMacKeyEvent e
+skSend sk e = either putErr go $ toMacKeyEvent e
   where go e' = liftIO $ do
           poke (sk^.buffer) e'
           send_key $ sk^.buffer
+        putErr e' = liftIO $ print e'

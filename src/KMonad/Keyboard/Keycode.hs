@@ -305,6 +305,8 @@ data Keycode
   | KeyFn
   | KeyLaunchpad
   | KeyMissionCtrl
+  | KeySpotlight
+  | KeyDictation
 #endif
   deriving (Eq, Show, Bounded, Enum, Ord, Generic, Hashable)
 
@@ -323,7 +325,7 @@ instance Display Keycode where
 
 -- | The set of all existing 'Keycode'
 kcAll :: S.HashSet Keycode
-kcAll = S.fromList $ [minBound .. maxBound]
+kcAll = S.fromList [minBound .. maxBound]
 
 -- | The set of all 'Keycode' that are not of the MissingXX pattern
 kcNotMissing :: S.HashSet Keycode
@@ -378,6 +380,8 @@ aliases = Q.mkMultiMap
   , (Key102nd,          ["102d", "lsgt", "nubs"])
   , (KeyForward,        ["fwd"])
   , (KeyScrollLock,     ["scrlck", "slck"])
+  , (KeyScrollUp,       ["scrup", "sup"])
+  , (KeyScrollDown,     ["scrdn", "sdwn", "sdn"])
   , (KeyPrint,          ["prnt"])
   , (KeyWakeUp,         ["wkup"])
   , (KeyLeft,           ["lft"])
@@ -385,7 +389,7 @@ aliases = Q.mkMultiMap
   , (KeyLeftBrace,      ["lbrc", "["])
   , (KeyRightBrace,     ["rbrc", "]"])
   , (KeySemicolon,      ["scln", ";"])
-  , (KeyApostrophe,     ["apos", "'"])
+  , (KeyApostrophe,     ["apos", "'", "apo"])
   , (KeyGrave,          ["grv", "`"])
   , (KeyBackslash,      ["bksl", "\\"]) -- NOTE: "\\" here is a 1char string, the first \ is consumed by Haskell as an escape character
   , (KeyComma,          ["comm", ","])
@@ -407,5 +411,7 @@ aliases = Q.mkMultiMap
 #ifdef darwin_HOST_OS
   , (KeyLaunchpad,      ["lp"])
   , (KeyMissionCtrl,    ["mctl"])
+  , (KeySpotlight,      ["spot"])
+  , (KeyDictation,      ["dict"])
 #endif
   ]

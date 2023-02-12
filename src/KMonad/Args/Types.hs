@@ -10,12 +10,9 @@ Portability : non-portable (MPTC with FD, FFI to Linux-only c-code)
 
 -}
 module KMonad.Args.Types
-  ( -- * $bsc
-    Parser
-  , PErrors(..)
-
+  (
     -- * $cfg
-  , CfgToken(..)
+    CfgToken(..)
 
     -- * $but
   , DefButton(..)
@@ -35,10 +32,6 @@ module KMonad.Args.Types
     -- * $lenses
   , AsKExpr(..)
   , AsDefSetting(..)
-
-    -- * Reexports
-  , module Text.Megaparsec
-  , module Text.Megaparsec.Char
 ) where
 
 
@@ -48,25 +41,6 @@ import KMonad.Model.Button
 import KMonad.Keyboard
 import KMonad.Keyboard.IO
 import KMonad.Util
-
-import Text.Megaparsec
-import Text.Megaparsec.Char
-
---------------------------------------------------------------------------------
--- $bsc
---
--- The basic types of parsing
-
--- | Parser's operate on Text and carry no state
-type Parser = Parsec Void Text
-
--- | The type of errors returned by the Megaparsec parsers
-newtype PErrors = PErrors (ParseErrorBundle Text Void)
-
-instance Show PErrors where
-  show (PErrors e) = "Parse error at " <> errorBundlePretty e
-
-instance Exception PErrors
 
 --------------------------------------------------------------------------------
 -- $but
@@ -80,6 +54,8 @@ instance Exception PErrors
 data DefButton
   = KRef Text                              -- ^ Reference a named button
   | KEmit Keycode                          -- ^ Emit a keycode
+  | KPressOnly Keycode                     -- ^ Emit only the press of a keycode
+  | KReleaseOnly Keycode                   -- ^ Emit only the release of a keycode
   | KLayerToggle Text                      -- ^ Toggle to a layer when held
   | KLayerSwitch Text                      -- ^ Switch base-layer when pressed
   | KLayerAdd Text                         -- ^ Add a layer when pressed
@@ -91,6 +67,7 @@ data DefButton
   | KTapNextRelease DefButton DefButton    -- ^ Do 2 things based on behavior
   | KTapHoldNextRelease Int DefButton DefButton (Maybe DefButton)
     -- ^ Like KTapNextRelease but with a timeout
+  | KTapNextPress DefButton DefButton      -- ^ Like KTapNextRelease but also hold on presses
   | KAroundNext DefButton                  -- ^ Surround a future button
   | KAroundNextSingle DefButton            -- ^ Surround a future button
   | KMultiTap [(Int, DefButton)] DefButton -- ^ Do things depending on tap-count
@@ -107,6 +84,7 @@ data DefButton
   | KCommand Text (Maybe Text)             -- ^ Execute a shell command on press, as well
                                            --   as possibly on release
   | KStickyKey Int DefButton               -- ^ Act as if a button is pressed for a period of time
+  | KBeforeAfterNext DefButton DefButton   -- ^ Surround a future button in a before and after tap
   | KTrans                                 -- ^ Transparent button that does nothing
   | KBlock                                 -- ^ Button that catches event
   deriving Show
@@ -167,7 +145,7 @@ data IToken
 -- | All different output-tokens KMonad can take
 data OToken
   = KUinputSink Text (Maybe Text)
-  | KSendEventSink
+  | KSendEventSink (Maybe (Int, Int))
   | KKextSink
   deriving Show
 

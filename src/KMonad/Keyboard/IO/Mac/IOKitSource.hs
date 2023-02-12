@@ -14,6 +14,8 @@ import KMonad.Keyboard
 import KMonad.Keyboard.IO
 import KMonad.Keyboard.IO.Mac.Types
 
+import Prelude (print)
+
 --------------------------------------------------------------------------------
 
 -- | Use the mac c-api to `grab` a keyboard
@@ -30,14 +32,14 @@ foreign import ccall "wait_key"
   wait_key :: Ptr MacKeyEvent -> IO Word8
 
 
-data EvBuf = EvBuf
-  { _buffer :: !(Ptr MacKeyEvent)
+newtype EvBuf = EvBuf
+  { _buffer :: Ptr MacKeyEvent
   }
 makeLenses ''EvBuf
 
 -- | Return a KeySource using the Mac IOKit approach
 iokitSource :: HasLogFunc e
-  => (Maybe String)
+  => Maybe String
   -> RIO e (Acquire KeySource)
 iokitSource name = mkKeySource (iokitOpen name) iokitClose iokitRead
 
@@ -46,7 +48,7 @@ iokitSource name = mkKeySource (iokitOpen name) iokitClose iokitRead
 
 -- | Ask IOKit to open keyboards matching the specified name
 iokitOpen :: HasLogFunc e
-  => (Maybe String)
+  => Maybe String
   -> RIO e EvBuf
 iokitOpen m = do
   logInfo "Opening IOKit devices"
@@ -80,4 +82,7 @@ iokitRead b = do
     peek $ b^.buffer
   case fromMacKeyEvent we of
     Nothing -> iokitRead b
-    Just e  -> either throwIO pure e
+    Just e  -> either errRetry pure e
+  where errRetry e = do
+          liftIO $ print e
+          iokitRead b

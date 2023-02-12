@@ -22,6 +22,7 @@ import Foreign.Storable
 import KMonad.Keyboard
 import KMonad.Keyboard.IO
 import KMonad.Keyboard.IO.Windows.Types
+import Prelude (print)
 
 --------------------------------------------------------------------------------
 
@@ -81,4 +82,7 @@ llRead ll = do
   we <- liftIO $ do
     wait_key $ ll^.buffer
     peek $ ll^.buffer
-  either throwIO pure $ fromWinKeyEvent we
+  either errRetry pure $ fromWinKeyEvent we
+  where errRetry e = do
+          liftIO $ print e
+          llRead ll
