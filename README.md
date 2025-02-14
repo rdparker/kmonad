@@ -18,14 +18,17 @@ KMonad is an advanced tool that lets you infinitely customize and extend the fun
 
 If you want to get started with the latest, stable binary release, please check out the master branch, if you are interested in the latest additions and tweaks, switch on over to develop and compile your own binary.
 
-Additionally, if you need any help or just want to say hi, you can join our [Discord server](https://discord.gg/3tFfWmnahN) or jump into our [IRC channel](https://web.libera.chat/#kmonad) (`#kmonad@irc.libera.chat`), which is also bridged with matrix (`#kmonad:libera.chat`).
+Additionally, if you need any help or just want to say hi,
+you can join our [Matrix space](https://matrix.to/#/#Kmonad:matrix.org) or
+jump into our [IRC channel](https://web.libera.chat/#kmonad).
+There is also a [KMonad Subreddit](https://www.reddit.com/r/Kmonad/).
 
 ## Features
 
 
 KMonad offers advanced customization features such as **layers**, **multi-tap**, **tap-hold**, and much more. These features are usually available at the hardware level on the QMK-firmware enabled keyboards. However, KMonad allows you to enjoy such features in virtually any keyboard by low-level system manipulations.
 
-For a good introduction to KMonad, have a look at [this Youtube video](https://www.youtube.com/watch?v=Dhj1eauljwU).
+For a good introduction to KMonad, have a look at [this YouTube video](https://www.youtube.com/watch?v=Dhj1eauljwU).
 
 
 
@@ -58,6 +61,7 @@ For more information on how to install KMonad, please refer to:
 
 For information on how to configure KMonad, please refer you to:
 - [the configuration tutorial](keymap/tutorial.kbd)
+- [quick reference](doc/quick-reference.md)
 - [user configurations](https://github.com/kmonad/kmonad-contrib)
 
 Want to add your own keyboard configuration to [kmonad-contrib]? Just
@@ -72,8 +76,9 @@ username and submit a pull request!
 - [VSCode](https://github.com/canadaduane/vscode-kmonad)
 
 ### Startup
-There are startup scripts available for different init systems in
-[startup](startup/).
+- There are startup scripts available for different init systems in [`startup/`](startup/).
+- A [GNOME Shell extension](https://extensions.gnome.org/extension/6069/kmonad-toggle/)
+  is available.
 
 ## Troubleshooting
 For several commonly asked questions regarding various configuration issues, please see:

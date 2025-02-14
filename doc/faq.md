@@ -4,19 +4,24 @@
 - [Linux](#linux)
     - [Q: How do I get Uinput permissions?](#q-how-do-i-get-uinput-permissions)
     - [Q: How do I know which event-file corresponds to my keyboard?](#q-how-do-i-know-which-event-file-corresponds-to-my-keyboard)
+        - [Q: `/dev/input` does not exist?](#q-dev-input-does-not-exist)
     - [Q: How do I emit Hyper_L?](#q-how-do-i-emit-hyper_l)
     - [Q: How does Unicode entry work?](#q-how-does-unicode-entry-work)
-    - [Q: How do I use the same layout definition for different keyboards](#q-how-do-i-use-the-same-layout-definition-for-different-keyboards)
+    - [Q: How do I use the same layout definition for different keyboards?](#q-how-do-i-use-the-same-layout-definition-for-different-keyboards)
 - [Windows](#windows)
-    - [How do I start KMonad?](#how-do-i-start-kmonad)
+    - [Q: How do I start KMonad?](#q-how-do-i-start-kmonad)
         - [Using the command-line](#using-the-command-line)
         - [Making a launcher](#making-a-launcher)
 - [Mac](#mac)
     - [Q: How to use the special features printed on Apple function keys?](#q-how-to-use-the-special-features-printed-on-apple-function-keys)
 - [General](#general)
+    - [Q: Why can't I remap certain (non US) buttons?](#q-why-cant-i-remap-certain-non-us-buttons)
+    - [Q: What does `Ta`, `Pa` and `Ra` stand for?](#q-what-does-ta-pa-and-ra-stand-for)
     - [Q: Why doesn't the 'Print' keycode work for my print screen button?](#q-why-doesnt-the-print-keycode-work-for-my-print-screen-button)
     - [Q: Why can't I remap the Fn key on my laptop?](#q-why-cant-i-remap-the-fn-key-on-my-laptop)
+    - [Q: Why do some key combination not work?](#q-why-do-some-key-combination-not-work)
     - [Q: When I run KMonad I get error `Not available under this OS`](#q-when-i-run-kmonad-i-get-error-not-available-under-this-os)
+    - [Q: Where can I find a list of keycodes which can be used in KMonad?](#q-where-can-i-find-a-list-of-keycodes-which-can-be-used-in-kmonad)
 
 <!-- markdown-toc end -->
 
@@ -38,8 +43,7 @@ sudo groupadd uinput
 
 2. Add your user to the `input` and the `uinput` group:
 ``` shell
-sudo usermod -aG input username
-sudo usermod -aG uinput username
+sudo usermod -aG input,uinput username
 ```
 
 Make sure that it's effective by running `groups`. You might have to logout and login.
@@ -65,6 +69,11 @@ under `/dev/input/by-id`. In some case, you could also try
 `/dev/input/by-path`. If you can't figure out which file just by
 the filenames, the `evtest` program is very helpful.
 
+#### Q: `/dev/input` does not exist?
+
+A: This may be due to the kernel module `evdev` not being loaded.
+Try to run `sudo modprobe evdev`.
+
 ### Q: How do I emit Hyper_L?
 
 A: `Hyper_L` is not a core Linux keycode, but is X11 specific instead. KMonad
@@ -75,9 +84,9 @@ X11 lines up well with KMonad. See [this issue](https://github.com/kmonad/kmonad
 ### Q: How does Unicode entry work?
 
 A: Unicode entry works via X11 compose-key sequences. For information on how to
-configure kmonad to make use of this, please see [the tutorial](../keymap/tutorial.kbd).
+configure KMonad to make use of this, please see [the tutorial](../keymap/tutorial.kbd).
 
-### Q: How do I use the same layout definition for different keyboards
+### Q: How do I use the same layout definition for different keyboards?
 
 A:
 Create a layout file with an environment variable instead of `device-file` option, i.e. `kmonad.kbd`.
@@ -107,7 +116,7 @@ kmonad <(echo "$KBDCFG")
 
 ## Windows
 
-### How do I start KMonad?
+### Q: How do I start KMonad?
 
 A: This might be confusing if you are used to using a GUI and clicking on
 things. Double clicking KMonad will look like it does nothing. KMonad is a
@@ -187,9 +196,9 @@ corresponding to F1; macOS then translates this keycode to a special feature
 driver](https://github.com/pqrs-org/Karabiner-VirtualHIDDevice/issues/1). But
 `kmonad` intercepts key presses before this translation can occur, and it emits
 keypresses through a driver of its own. Therefore macOS does not translate any
-keypresses emitted by kmonad, and the checkbox labeled "Use F1, F2, etc. keys as
+keypresses emitted by KMonad, and the checkbox labeled "Use F1, F2, etc. keys as
 standard function keys" in `System Preferences` will have no effect on keyboards
-modified by kmonad.
+modified by KMonad.
 
 However, we can simulate the default behavior of Apple keyboards by emitting
 keycodes that correspond to the special features printed on the function
@@ -198,9 +207,38 @@ example.
 
 ## General
 
+### Q: Why can't I remap certain (non US) buttons?
+
+KMonad works prior to your OS keymapping taking affect.
+It also uses the names taken from the standard US qwerty layout.
+
+If you were for example looking to remap an `ü` on a german qwertz keyboard
+you would specify the letter that would be there in qwerty (`[`).
+
+This is of course also true for buttons which are in a different place.
+On the german layout the `+` is reached without shift, while on US qwerty it's
+on `S-=`. This means it's also not a valid keycode to specify in your `defsrc`.
+
+### Q: What does `Ta`, `Pa` and `Ra` stand for?
+
+A: Those are part of a mini-language from the tutorial:
+
+- `Px` signifies the press of the button (or keycode) `x`
+- `Rx` signifies the release of `x`
+- `Tx` signifies the sequential and near instantaneous press and release of `x`
+- `100` signifies 100ms passing without any action
+
+So for example when talking about buttons:
+
+- `Tesc Pa` is a tap of `Esc` and a press of `a`
+- `P@a Tb R@a` is the alias `@a` pressed around the button `b`
+
+This language is useful since "tap" is normally a synonym for "press"
+and this may lead to confusion in discussions and issues.
+
 ### Q: Why doesn't the 'Print' keycode work for my print screen button?
 
-A: Because the Keycode for "print screen" is actually 'SysReq' ("ssrq" or "sys")
+A: Because the keycode for "print screen" is actually 'SysReq' ("ssrq" or "sys")
 for relatively interesting historical reasons. Have a look at [this
 issue](https://github.com/kmonad/kmonad/issues/59) if you want more
 information.
@@ -213,6 +251,21 @@ creating a numpad in the middle of the laptop keyboard. This remapping happens
 in the hardware, before any event is ever registered with the operating system,
 therefore KMonad has no way to 'get' at any of those events. This means that we
 cannot remap them in any way.
+
+### Q: Why do some key combination not work?
+
+A: Some keyboards have a low
+[rollover](https://en.wikipedia.org/wiki/Key_rollover).
+It is the lowest maximum number of keys which can be pressed together and
+handled correctly. Most keyboards then have to resort to blocking.
+So If you have buttons which work fine individually but some special
+combination does not, check whether you are affected by it.
+To do this you can use an
+[online rollover test](https://www.mechanical-keyboard.org/key-rollover-test/).
+For correct results it is recommended to turn off KMonad
+(Also note that some keys cannot be captured by a website).
+Another option is to try a different keyboard.
+The only other fix is circumvention.
 
 ### Q: When I run KMonad I get error `Not available under this OS`
 

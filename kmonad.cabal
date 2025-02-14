@@ -2,7 +2,7 @@ cabal-version: 2.2
 
 name:           kmonad
 category:       Application
-version:        0.4.1
+version:        0.4.3
 synopsis:       Advanced keyboard remapping utility
 author:         David Janssen
 maintainer:     janssen.dhj@gmail.com
@@ -18,6 +18,8 @@ description:
 
 extra-source-files:
     changelog.md
+    doc/quick-reference.md
+    keymap/tutorial.kbd
 
 flag kext
     description: build against the kext [macOS only]
@@ -37,7 +39,7 @@ library
     -Wno-name-shadowing
     -Wno-unused-imports
   build-depends:
-      base
+      base >= 4.12 && < 5
     , cereal
     -- , hspec
     , lens
@@ -53,6 +55,7 @@ library
       ConstraintKinds
       DeriveFunctor
       DeriveGeneric
+      DeriveDataTypeable
       DeriveTraversable
       FlexibleContexts
       FlexibleInstances
@@ -61,12 +64,16 @@ library
       LambdaCase
       MultiParamTypeClasses
       MultiWayIf
+      NamedFieldPuns
       NoImplicitPrelude
       OverloadedStrings
       RankNTypes
       TemplateHaskell
       TupleSections
       TypeFamilies
+
+  autogen-modules:
+      Paths_kmonad
 
   exposed-modules:
       KMonad.App
@@ -90,6 +97,10 @@ library
       KMonad.Keyboard
       KMonad.Keyboard.ComposeSeq
       KMonad.Keyboard.IO
+      -- We always export them, so we can test them
+      KMonad.Keyboard.IO.Linux.Types
+      KMonad.Keyboard.IO.Mac.Types
+      KMonad.Keyboard.IO.Windows.Types
       KMonad.Keyboard.Keycode
       KMonad.Keyboard.Ops
       KMonad.Keyboard.Types
@@ -105,7 +116,6 @@ library
   if os(linux)
     exposed-modules:
       KMonad.Keyboard.IO.Linux.DeviceSource
-      KMonad.Keyboard.IO.Linux.Types
       KMonad.Keyboard.IO.Linux.UinputSink
     c-sources:
       c_src/keyio.c
@@ -116,7 +126,6 @@ library
     exposed-modules:
       KMonad.Keyboard.IO.Windows.LowLevelHookSource
       KMonad.Keyboard.IO.Windows.SendEventSink
-      KMonad.Keyboard.IO.Windows.Types
     c-sources:
       c_src/keyio_win.c
     build-depends:
@@ -126,17 +135,21 @@ library
     exposed-modules:
       KMonad.Keyboard.IO.Mac.IOKitSource
       KMonad.Keyboard.IO.Mac.KextSink
-      KMonad.Keyboard.IO.Mac.Types
     if flag(kext)
       cxx-sources:
         c_src/mac/kext.cpp
       cxx-options:
         -std=c++14
+      include-dirs:
+        c_src/mac/Karabiner-VirtualHIDDevice/dist/include
     if flag(dext)
       cxx-sources:
         c_src/mac/dext.cpp
       cxx-options:
         -std=c++2a
+      include-dirs:
+        c_src/mac/Karabiner-DriverKit-VirtualHIDDevice/include/pqrs/karabiner/driverkit
+        c_src/mac/Karabiner-DriverKit-VirtualHIDDevice/src/Client/vendor/include
     extra-libraries:
       c++
     build-depends:
@@ -157,7 +170,7 @@ executable kmonad
   hs-source-dirs:
       app
   build-depends:
-      base
+      base >= 4.12 && < 5
     , kmonad
 
 test-suite spec
@@ -168,11 +181,15 @@ test-suite spec
   ghc-options:
       -Wall
   build-depends:
-      base
+      base >= 4.12 && < 5
     , kmonad
     , hspec
+    , rio
   other-modules:
+      KMonad.ButtonDocSpec
       KMonad.GestureSpec
+      KMonad.ComposeSeqSpec
+      KMonad.KeycodeSpec
   default-language:
       Haskell2010
   build-tool-depends: hspec-discover:hspec-discover == 2.*
@@ -180,6 +197,7 @@ test-suite spec
       ConstraintKinds
       DeriveFunctor
       DeriveGeneric
+      DeriveDataTypeable
       DeriveTraversable
       FlexibleContexts
       FlexibleInstances
@@ -188,6 +206,7 @@ test-suite spec
       LambdaCase
       MultiParamTypeClasses
       MultiWayIf
+      NamedFieldPuns
       NoImplicitPrelude
       OverloadedStrings
       RankNTypes

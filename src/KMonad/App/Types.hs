@@ -51,6 +51,7 @@ data AppCfg = AppCfg
   , _fallThrough  :: Bool              -- ^ Whether uncaught events should be emitted or not
   , _allowCmd     :: Bool              -- ^ Whether shell-commands are allowed
   , _startDelay   :: Milliseconds      -- ^ How long to wait before acquiring the input keyboard
+  , _keyOutDelay  :: Maybe Milliseconds -- ^ How long to wait after each key event outputted
   }
 makeClassy ''AppCfg
 
@@ -144,6 +145,6 @@ instance (HasAppEnv e, HasAppCfg e, HasLogFunc e) => MonadKIO (RIO e) where
     spawnCommand cmd = void $ createProcess_ "spawnCommand"
       (shell cmd){ -- We don't want the child process to inherit things like
                    -- our keyboard grab (this would, for example, make it
-                   -- impossible for a command to restart kmonad).
+                   -- impossible for a command to restart KMonad).
                    close_fds   = True
                  }

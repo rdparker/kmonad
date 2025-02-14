@@ -50,7 +50,7 @@ import KMonad.Keyboard.IO.Mac.KextSink
 
 import Control.Monad.Except
 
-import RIO.List (headMaybe, intersperse, uncons)
+import RIO.List (headMaybe, intersperse, uncons, sort, group)
 import RIO.Partial (fromJust)
 import qualified KMonad.Util.LayerStack  as L
 import qualified RIO.HashMap      as M
@@ -65,11 +65,16 @@ data JoinError
   | MissingBlock     Text
   | DuplicateAlias   Text
   | DuplicateLayer   Text
+  | DuplicateSource  (Maybe Text)
+  | DuplicateKeyInSource (Maybe Text) [Keycode]
   | MissingAlias     Text
   | MissingLayer     Text
+  | MissingSource    (Maybe Text)
   | MissingSetting   Text
   | DuplicateSetting Text
+  | DuplicateLayerSetting Text Text
   | InvalidOS        Text
+  | ImplArndDisabled
   | NestedTrans
   | InvalidComposeKey
   | LengthMismatch   Text Int Int
@@ -80,11 +85,22 @@ instance Show JoinError where
     MissingBlock      t   -> "Missing at least 1 block of type: "    <> T.unpack t
     DuplicateAlias    t   -> "Multiple aliases of the same name: "   <> T.unpack t
     DuplicateLayer    t   -> "Multiple layers of the same name: "    <> T.unpack t
+    DuplicateSource   t   -> case t of
+      Just t  -> "Multiple sources of the same name: " <> T.unpack t
+      Nothing -> "Multiple default sources"
+    DuplicateKeyInSource   t ks   -> case t of
+      Just t  -> "Keycodes appear multiple times in source `" <> T.unpack t <> "`:" <> ((' ' :) . show =<< ks)
+      Nothing -> "Keycodes appear multiple times in default source: " <> ((' ' :) . show =<< ks)
     MissingAlias      t   -> "Reference to non-existent alias: "     <> T.unpack t
     MissingLayer      t   -> "Reference to non-existent layer: "     <> T.unpack t
+    MissingSource     t   -> case t of
+      Just t  -> "Reference to non-existent source: " <> T.unpack t
+      Nothing -> "Reference to non-existent default source"
     MissingSetting    t   -> "Missing setting in 'defcfg': "         <> T.unpack t
     DuplicateSetting  t   -> "Duplicate setting in 'defcfg': "       <> T.unpack t
+    DuplicateLayerSetting t s -> "Duplicate setting in 'deflayer '"  <> T.unpack t <> "': " <> T.unpack s
     InvalidOS         t   -> "Not available under this OS: "         <> T.unpack t
+    ImplArndDisabled      -> "Implicit around via `A` or `S-a` are disabled in your config"
     NestedTrans           -> "Encountered 'Transparent' ouside of top-level layer"
     InvalidComposeKey     -> "Encountered invalid button as Compose key"
     LengthMismatch t l s  -> mconcat
@@ -98,6 +114,7 @@ instance Exception JoinError
 -- | Joining Config
 data JCfg = JCfg
   { _cmpKey  :: Button  -- ^ How to prefix compose-sequences
+  , _implArnd :: ImplArnd -- ^ How to handle implicit `around`s
   , _kes     :: [KExpr] -- ^ The source expresions we operate on
   }
 makeLenses ''JCfg
@@ -105,6 +122,7 @@ makeLenses ''JCfg
 defJCfg :: [KExpr] ->JCfg
 defJCfg = JCfg
   (emitB KeyRightAlt)
+  IAAround
 
 -- | Monad in which we join, just Except over Reader
 newtype J a = J { unJ :: ExceptT JoinError (Reader JCfg) a }
@@ -164,12 +182,13 @@ joinConfig' = do
   o  <- getO
   ft <- getFT
   al <- getAllow
+  ksd <- getKeySeqDelay
 
   -- Extract the other blocks and join them into a keymap
   let als = extract _KDefAlias es
   let lys = extract _KDefLayer es
-  src      <- oneBlock "defsrc" _KDefSrc
-  (km, fl) <- joinKeymap src als lys
+  let srcs = extract _KDefSrc es
+  (km, fl) <- joinKeymap srcs als lys
 
   pure $ CfgToken
     { _snk   = o
@@ -178,6 +197,7 @@ joinConfig' = do
     , _fstL  = fl
     , _flt   = ft
     , _allow = al
+    , _ksd   = ksd
     }
 
 --------------------------------------------------------------------------------
@@ -189,12 +209,14 @@ joinConfig' = do
 -- | Return a JCfg with all settings from defcfg applied to the env's JCfg
 getOverride :: J JCfg
 getOverride = do
+  -- FIXME: duplicates don't throw errors
   env <- ask
   cfg <- oneBlock "defcfg" _KDefCfg
   let getB = joinButton [] M.empty
   let go e v = case v of
         SCmpSeq b  -> getB b >>= maybe (throwError InvalidComposeKey)
                                        (\b' -> pure $ set cmpKey b' e)
+        SImplArnd ia -> pure $ set implArnd ia e
         _ -> pure e
   foldM go env cfg
 
@@ -243,9 +265,20 @@ getCmpSeqDelay :: J (Maybe Int)
 getCmpSeqDelay = do
   cfg <- oneBlock "defcfg" _KDefCfg
   case onlyOne . extract _SCmpSeqDelay $ cfg of
+    Right 0        -> pure Nothing
     Right b        -> pure (Just b)
     Left None      -> pure Nothing
     Left Duplicate -> throwError $ DuplicateSetting "cmp-seq-delay"
+
+-- | Extract the key-seq-delay setting
+getKeySeqDelay :: J (Maybe Int)
+getKeySeqDelay = do
+  cfg <- oneBlock "defcfg" _KDefCfg
+  case onlyOne . extract _SKeySeqDelay $ cfg of
+    Right 0        -> pure Nothing
+    Right b        -> pure (Just b)
+    Left None      -> pure (Just 5)
+    Left Duplicate -> throwError $ DuplicateSetting "key-seq-delay"
 
 #ifdef linux_HOST_OS
 
@@ -320,6 +353,12 @@ joinAliases ns als = foldM f M.empty $ concat als
 unnest :: J (Maybe Button) -> J Button
 unnest = (maybe (throwError NestedTrans) pure =<<)
 
+fromImplArnd :: DefButton -> DefButton -> ImplArnd -> J DefButton
+fromImplArnd _ _ IADisabled        = throwError ImplArndDisabled
+fromImplArnd o i IAAround          = pure $ KAround o i
+fromImplArnd o i IAAroundOnly      = pure $ KAroundOnly o i
+fromImplArnd o i IAAroundWhenAlone = pure $ KAroundWhenAlone o i
+
 -- | Turn a button token into an actual KMonad `Button` value
 joinButton :: LNames -> Aliases -> DefButton -> J (Maybe Button)
 joinButton ns als =
@@ -363,7 +402,8 @@ joinButton ns als =
     -- Various compound buttons
     KComposeSeq bs     -> do csd <- getCmpSeqDelay
                              c   <- view cmpKey
-                             jst $ tapMacro . (c:) <$> isps bs csd
+                             csd' <- for csd $ go . KPause . fi
+                             jst $ tapMacro . (c:) . maybe id (:) csd' <$> isps bs csd
     KTapMacro bs mbD   -> jst $ tapMacro           <$> isps bs mbD
     KBeforeAfterNext b a -> jst $ beforeAfterNext <$> go b <*> go a
     KTapMacroRelease bs mbD ->
@@ -377,12 +417,16 @@ joinButton ns als =
     KTapHoldNextRelease ms t h mtb
       -> jst $ tapHoldNextRelease (fi ms) <$> go t <*> go h <*> traverse go mtb
     KTapNextPress t h  -> jst $ tapNextPress       <$> go t <*> go h
+    KAroundOnly o i    -> jst $ aroundOnly         <$> go o <*> go i
+    KAroundWhenAlone o i -> jst $ aroundWhenAlone  <$> go o <*> go i
+    KAroundImplicit o i  -> joinButton ns als =<< fromImplArnd o i =<< view implArnd
     KAroundNext b      -> jst $ aroundNext         <$> go b
     KAroundNextSingle b -> jst $ aroundNextSingle <$> go b
     KAroundNextTimeout ms b t -> jst $ aroundNextTimeout (fi ms) <$> go b <*> go t
     KPause ms          -> jst . pure $ onPress (pause ms)
     KMultiTap bs d     -> jst $ multiTap <$> go d <*> mapM f bs
       where f (ms, b) = (fi ms,) <$> go b
+    KStepped bs        -> jst $ steppedButton <$> mapM go bs
     KStickyKey s d     -> jst $ stickyKey (fi s) <$> go d
 
     -- Non-action buttons
@@ -391,17 +435,37 @@ joinButton ns als =
 
 
 --------------------------------------------------------------------------------
+-- $src
+
+type Sources = M.HashMap (Maybe Text) DefSrc
+
+-- | Build up a hashmap of text to source mappings.
+joinSources :: [DefSrc] -> J Sources
+joinSources = foldM joiner mempty
+  where
+   joiner :: Sources -> DefSrc -> J Sources
+   joiner sources src@DefSrc{ _srcName = n, _keycodes = ks }
+     | n `M.member` sources = throwError $ DuplicateSource n
+     | not (null dups)      = throwError $ DuplicateKeyInSource n dups
+     | otherwise            = pure $ M.insert n src sources
+    where
+     dups :: [Keycode]
+     dups = concatMap (take 1) . filter ((> 1) . length) . group . sort $ ks
+
+--------------------------------------------------------------------------------
 -- $kmap
 
 -- | Join the defsrc, defalias, and deflayer layers into a Keymap of buttons and
 -- the name signifying the initial layer to load.
-joinKeymap :: DefSrc -> [DefAlias] -> [DefLayer] -> J (LMap Button, LayerTag)
-joinKeymap _   _   []  = throwError $ MissingBlock "deflayer"
-joinKeymap src als lys = do
+joinKeymap :: [DefSrc] -> [DefAlias] -> [DefLayer] -> J (LMap Button, LayerTag)
+joinKeymap []   _   _   = throwError $ MissingBlock "defsrc"
+joinKeymap _    _   []  = throwError $ MissingBlock "deflayer"
+joinKeymap srcs als lys = do
   let f acc x = if x `elem` acc then throwError $ DuplicateLayer x else pure (x:acc)
-  nms  <- foldM f [] $ map _layerName lys   -- Extract all names
-  als' <- joinAliases nms als               -- Join aliases into 1 hashmap
-  lys' <- mapM (joinLayer als' nms src) lys -- Join all layers
+  nms   <- foldM f [] $ map _layerName lys     -- Extract all names
+  als'  <- joinAliases nms als                 -- Join aliases into 1 hashmap
+  srcs' <- joinSources  srcs                   -- Join all sources into 1 hashmap
+  lys'  <- mapM (joinLayer als' nms srcs') lys -- Join all layers
   -- Return the layerstack and the name of the first layer
   pure (L.mkLayerStack lys', _layerName . fromJust . headMaybe $ lys)
 
@@ -409,11 +473,17 @@ joinKeymap src als lys = do
 joinLayer ::
      Aliases                       -- ^ Mapping of names to buttons
   -> LNames                        -- ^ List of valid layer names
-  -> DefSrc                        -- ^ Layout of the source layer
+  -> Sources                       -- ^ Mapping of names to source layer
   -> DefLayer                      -- ^ The layer token to join
   -> J (Text, [(Keycode, Button)]) -- ^ The resulting tuple
-joinLayer als ns src DefLayer{_layerName=n, _buttons=bs} = do
+joinLayer als ns srcs l@(DefLayer n settings) = do
+  let bs = settings ^.. each . _LButton
+  assocSrc <- getAssocSrc l
+  implAround <- getImplAround l
 
+  src <- case M.lookup assocSrc srcs of
+    Just src -> pure $ src^.keycodes
+    Nothing  -> throwError $ MissingSource assocSrc
   -- Ensure length-match between src and buttons
   when (length bs /= length src) $
     throwError $ LengthMismatch n (length bs) (length src)
@@ -422,8 +492,20 @@ joinLayer als ns src DefLayer{_layerName=n, _buttons=bs} = do
   let f acc (kc, b) = joinButton ns als b >>= \case
         Nothing -> pure acc
         Just b' -> pure $ (kc, b') : acc
-  (n,) <$> foldM f [] (zip src bs)
+  maybe id (local . set implArnd) implAround $
+    (n,) <$> foldM f [] (zip src bs)
 
+getAssocSrc :: DefLayer -> J (Maybe Text)
+getAssocSrc (DefLayer n settings) = case onlyOne (settings ^.. each . _LSrcName) of
+  Right x        -> pure $ Just x
+  Left None      -> pure Nothing
+  Left Duplicate -> throwError $ DuplicateLayerSetting n "source"
+
+getImplAround :: DefLayer -> J (Maybe ImplArnd)
+getImplAround (DefLayer n settings) = case onlyOne (settings ^.. each . _LImplArnd) of
+  Right x        -> pure $ Just x
+  Left None      -> pure Nothing
+  Left Duplicate -> throwError $ DuplicateLayerSetting n "implicit-around"
 
 --------------------------------------------------------------------------------
 -- $test

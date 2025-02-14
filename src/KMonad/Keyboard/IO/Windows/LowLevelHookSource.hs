@@ -28,7 +28,7 @@ import Prelude (print)
 
 -- | Use the windows c-api to `grab` a keyboard
 foreign import ccall "grab_kb"
-  grab_kb :: IO Word8
+  grab_kb :: IO ()
 
 -- | Release the keyboard hook
 foreign import ccall "release_kb"
@@ -44,7 +44,7 @@ foreign import ccall "wait_key"
 
 -- | Data used to track `connection` to windows process
 data LLHook = LLHook
-  { _thread :: !(Async Word8)        -- ^ The thread-id of the listen-process
+  { _thread :: !(Async ())        -- ^ The thread-id of the listen-process
   , _buffer :: !(Ptr WinKeyEvent) -- ^ Buffer used to communicate with process
   }
 makeLenses ''LLHook

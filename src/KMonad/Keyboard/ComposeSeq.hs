@@ -20,6 +20,7 @@ module KMonad.Keyboard.ComposeSeq
 where
 
 import KMonad.Prelude
+import RIO.Text.Partial (replace)
 
 --------------------------------------------------------------------------------
 
@@ -30,16 +31,21 @@ import KMonad.Prelude
 -- 3. A descriptive-name
 --
 ssComposed :: [(Text, Char, Text)]
-ssComposed =
+ssComposed = composeSeqs & (each . _1) %~ sanitize
+ where
+  sanitize :: Text -> Text
+  sanitize = replace "(" "\\("
+           . replace ")" "\\)"
+           . replace "_" "\\_"
+
+  composeSeqs :: [(Text, Char, Text)]
+  composeSeqs =
     [ ("' '"      , '´'     , "acute")
     , ( "^ -"     , '¯'     , "macron" )
     , ( "spc ("   , '˘'     , "breve" )
     , ( "\" \""   , '¨'     , "diaeresis" )
     , ("spc <"    , 'ˇ'     , "caron")
-    , ("` spc"    , '`'     , "grave")
     , (", spc"    , '¸'     , "cedilla")
-    , ("spc spc"  , ' '     , "nobreakspace")
-    , ("spc ."    , ' '     , "U2008")
     , ("o c"      , '©'     , "copyright")
     , ("o r"      , '®'     , "registered")
     , (". >"      , '›'     , "U203a")
@@ -728,11 +734,11 @@ ssComposed =
     , ("_ '"      , '⍘'     , "U2358")
     , ("0 ~"      , '⍬'     , "U236c")
     , ("| ~"      , '⍭'     , "U236d")
-    , ("c /"      , '¢'     , "cent" )
-    , ("< _"      , '≤'     , "U2264")
-    , ("> _"      , '≥'     , "U2265")
 
     -- Sequences that should exist but do not work
+    --, ("` spc"    , '`'     , "grave") -- recursive and incorrect. It's <dead_grave> <space> and <dead_grave> is not mapped in en_US
     --, ("^ spc", '^', "asciicircum") -- This overlaps with the normal 'shifted-6' macro for
     -- , ("' j", 'j́', "jacute")
+    --, ("spc spc"  , ' '     , "nobreakspace") -- cannot be parsed since it is matched by `lexeme` of previous token
+    --, ("spc ."    , ' '     , "U2008") -- see above
     ]

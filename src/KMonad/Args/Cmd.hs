@@ -17,7 +17,7 @@ module KMonad.Args.Cmd
 where
 
 import KMonad.Prelude hiding (try)
-import KMonad.Args.Parser (itokens, keywordButtons, noKeywordButtons, otokens, symbol, numP)
+import KMonad.Args.Parser (itokens, keywordButtons, noKeywordButtons, otokens, symbol, numP, implArndButtons)
 import KMonad.Args.TH (gitHash)
 import KMonad.Args.Types (DefSetting(..))
 import KMonad.Util
@@ -44,8 +44,10 @@ data Cmd = Cmd
     -- All 'KDefCfg' options of a 'KExpr'
   , _cmdAllow  :: DefSetting       -- ^ Allow execution of arbitrary shell-commands?
   , _fallThrgh :: DefSetting       -- ^ Re-emit unhandled events?
-  , _initStr   :: Maybe DefSetting -- ^ TODO: What does this do?
   , _cmpSeq    :: Maybe DefSetting -- ^ Key to use for compose-key sequences
+  , _cmpSeqDelay :: Maybe DefSetting -- ^ Specify compose sequence key delays
+  , _keySeqDelay :: Maybe DefSetting -- ^ Specify key event output delays
+  , _implArnd  :: Maybe DefSetting -- ^ How to handle implicit `around`s
   , _oToken    :: Maybe DefSetting -- ^ How to emit the output
   , _iToken    :: Maybe DefSetting -- ^ How to capture the input
   }
@@ -83,8 +85,10 @@ cmdP =
       <*> startDelayP
       <*> cmdAllowP
       <*> fallThrghP
-      <*> initStrP
       <*> cmpSeqP
+      <*> cmpSeqDelayP
+      <*> keySeqDelayP
+      <*> implArndP
       <*> oTokenP
       <*> iTokenP
 
@@ -131,15 +135,6 @@ fallThrghP = SFallThrough <$> switch
   <> help "Whether to simply re-emit unhandled events"
   )
 
--- | TODO what does this do?
-initStrP :: Parser (Maybe DefSetting)
-initStrP = optional $ SInitStr <$> strOption
-  (  long "init"
-  <> short 't'
-  <> metavar "STRING"
-  <> help "TODO"
-  )
-
 -- | Key to use for compose-key sequences
 cmpSeqP :: Parser (Maybe DefSetting)
 cmpSeqP = optional $ SCmpSeq <$> option
@@ -148,6 +143,32 @@ cmpSeqP = optional $ SCmpSeq <$> option
   <> short 's'
   <> metavar "BUTTON"
   <> help "Which key to use to emit compose-key sequences"
+  )
+
+-- | Specify compose sequence key delays.
+cmpSeqDelayP :: Parser (Maybe DefSetting)
+cmpSeqDelayP = optional $ SCmpSeqDelay <$> option (fromIntegral <$> megaReadM numP)
+  (  long  "cmp-seq-delay"
+  <> metavar "TIME"
+  <> help  "How many ms to wait between each key of a compose sequence"
+  )
+
+-- | Specify key event output delays.
+keySeqDelayP :: Parser (Maybe DefSetting)
+keySeqDelayP = optional $ SKeySeqDelay <$> option (fromIntegral <$> megaReadM numP)
+  (  long  "key-seq-delay"
+  <> metavar "TIME"
+  <> help  "How many ms to wait between each key event outputted"
+  )
+
+-- | How to handle implicit `around`s
+implArndP :: Parser (Maybe DefSetting)
+implArndP = optional $ SImplArnd <$> option
+  (maybeReader $ \x -> implArndButtons ^? each . filtered ((x ==) . unpack . view _1) . _2)
+  (  long "implicit-around"
+  <> long "ia"
+  <> metavar "AROUND"
+  <> help "How to translate implicit arounds (`A`, `S-a`)"
   )
 
 -- | Where to emit the output
@@ -174,6 +195,7 @@ startDelayP = option (fromIntegral <$> megaReadM numP)
   (  long  "start-delay"
   <> short 'w'
   <> value 300
+  <> metavar "TIME"
   <> showDefaultWith (show . unMS )
   <> help  "How many ms to wait before grabbing the input keyboard (time to release enter if launching from terminal)")
 

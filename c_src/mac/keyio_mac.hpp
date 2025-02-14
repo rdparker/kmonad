@@ -6,6 +6,13 @@
 #include <map>
 #include <iostream>
 #include <mach/mach_error.h>
+#include <AvailabilityMacros.h>
+
+/* The name was changed from "Master" to "Main" in Apple SDK 12.0 (Monterey) */
+/* MAC_OS_X_VERSION_12_0 does not exist :( */
+#if MAC_OS_X_VERSION_MAX_ALLOWED < 120000
+    #define kIOMainPortDefault kIOMasterPortDefault
+#endif
 
 int init_sink(void);
 int exit_sink(void);
@@ -69,7 +76,7 @@ void open_matching_devices(char *product, io_iterator_t iter) {
             return;
         }
     }
-    CFStringRef cfkarabiner = CFStringCreateWithCString(kCFAllocatorDefault, "Karabiner VirtualHIDKeyboard", CFStringGetSystemEncoding());
+    CFStringRef cfkarabiner = CFStringCreateWithCString(kCFAllocatorDefault, "Karabiner ", CFStringGetSystemEncoding());
     if(cfkarabiner == NULL) {
         print_iokit_error("CFStringCreateWithCString");
         if(product) {
@@ -83,7 +90,9 @@ void open_matching_devices(char *product, io_iterator_t iter) {
             print_iokit_error("IORegistryEntryCreateCFProperty");
             continue;
         }
-        bool match = (CFStringCompare(cfcurr, cfkarabiner, 0) != kCFCompareEqualTo);
+
+        // any device named "Karabiner ..." should be ignored
+        bool match = !CFStringHasPrefix(cfcurr, cfkarabiner);
         if(product) {
             match = match && (CFStringCompare(cfcurr, cfproduct, 0) == kCFCompareEqualTo);
         }
@@ -157,7 +166,7 @@ void monitor_kb(char *product) {
     CFRelease(cfValue);
     io_iterator_t iter = IO_OBJECT_NULL;
     CFRetain(matching_dictionary);
-    kr = IOServiceGetMatchingServices(kIOMasterPortDefault,
+    kr = IOServiceGetMatchingServices(kIOMainPortDefault,
                                       matching_dictionary,
                                       &iter);
     if(kr != KERN_SUCCESS) {
@@ -166,7 +175,7 @@ void monitor_kb(char *product) {
     }
     listener_loop = CFRunLoopGetCurrent();
     open_matching_devices(product, iter);
-    IONotificationPortRef notification_port = IONotificationPortCreate(kIOMasterPortDefault);
+    IONotificationPortRef notification_port = IONotificationPortCreate(kIOMainPortDefault);
     CFRunLoopSourceRef notification_source = IONotificationPortGetRunLoopSource(notification_port);
     CFRunLoopAddSource(listener_loop, notification_source, kCFRunLoopDefaultMode);
     CFRetain(matching_dictionary);
@@ -208,7 +217,7 @@ void monitor_kb(char *product) {
  * and opens a pipe for this thread to send key event data to the main
  * thread.
  *
- * Loads a the karabiner kernel extension that will send key events
+ * Loads a karabiner kernel extension that will send key events
  * back to the OS.
  */
 extern "C" int grab_kb(char *product) {

@@ -17,9 +17,10 @@
 
       # List of supported compilers:
       supportedCompilers = [
-        "ghc8107"
-        "ghc902"
-        "ghc922"
+        "ghc928"
+        "ghc948"
+        "ghc965"
+        "ghc983"
       ];
 
       # Function to generate a set based on supported systems:
@@ -69,7 +70,7 @@
         ];
         statSubmodulePhase = ''
           stat c_src/mac/Karabiner-DriverKit-VirtualHIDDevice/include || (
-            echo "Karabiner submodule not found. This flake needs to be built with submodules on darwin. See the kmonad docs for more information." 1>&2
+            echo "Karabiner submodule not found. This flake needs to be built with submodules on darwin. See the KMonad docs for more information." 1>&2
             exit 1
           )
         '';

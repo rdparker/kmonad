@@ -35,8 +35,8 @@ A block can take the following arguments:
 
 + `input`: define the input keyboard which the program will capture.
 
-+ `output`: define the output keyboard which kmonad will create, with
-  additional options to execute upon starting kmonad.
++ `output`: define the output keyboard which KMonad will create, with
+  additional options to execute upon starting KMonad.
 
 Here is how you would define the basic input and output settings on all
 supported systems:
@@ -68,7 +68,7 @@ The following are all global config options that one can set in the
 `defcfg` block.
 
 + `fallthrough` (boolean, defaults to `false`): re-emit keys that are
-  not defined in a `defsrc` block.
+  not defined in the corresponding `defsrc` block.
 
   This allows one to only specify certain parts of a layout, with all
   other keys having their "default" meaning.
@@ -83,8 +83,16 @@ The following are all global config options that one can set in the
 + `cmp-seq` (key, defaults to `RightAlt`): compose key for Unicode input
   (X11 specific).
 
-+ `cmp-seq-delay` (natural number): delay between each pressed key in a
++ `cmp-seq-delay` (natural number, defaults to `0`): delay between each pressed key in a
   compose-key sequence.
+
++ `key-seq-delay` (natural number, defaults to `5`): delay between each outputted key event.
+
++ `implicit-around` (around variant, defaults to `around`):
+  Specifies the variant of `around` to use in implicit around constructs
+  like `A` or `S-a`.
+  You can also specify `disabled`, which causes implicit arounds to
+  result in errors.
 
 ## Full Example
 
@@ -126,13 +134,13 @@ the macro the reactivation of the `alt` key, solving the problem.
 
 ## Modded Buttons
 
-To make key-entry easier, kmonad already provides some syntax for
+To make key-entry easier, KMonad already provides some syntax for
 Emacs-like specification of key chords. They are defined like this:
 
-  - `C-` : `(around lctl X)`
-  - `A-` : `(around lalt X)`
-  - `M-` : `(around lmet X)`
-  - `S-` : `(around lsft X)`
+  - `C-` : `(around-implicit lctl X)`
+  - `A-` : `(around-implicit lalt X)`
+  - `M-` : `(around-implicit lmet X)`
+  - `S-` : `(around-implicit lsft X)`
 
 Then `RC-`, `RA-`, `RM-`, and `RS-` behave exactly the same, except
 using the right-modifier.
@@ -140,13 +148,13 @@ using the right-modifier.
 The definition of a key chord then looks like this:
 
 ```clojure
-(defalias Ca C-a) ;; this is equivalent to (defalias Ca (around Ctl a))
+(defalias Ca C-a) ;; this is equivalent to (defalias Ca (around-implicit Ctl a))
 ```
 
 ## General Purpose Buttons
 
 + `defalias`: define a name for a button. This can then be referenced in
-  a layer using the `@name` syntax (see [layers][] below).
+  a layer using the `@name` syntax (see [layers](#layers) below).
 
   ```clojure
   (defalias
@@ -161,25 +169,81 @@ The definition of a key chord then looks like this:
   (defalias ad (around alt del)) ;; this is like pressing Alt+Del
   ```
 
++ `around-only`: `around` but release the outer button as soon as others are pressed.
+
+    ```clojure
+    (defalias
+      A (around lsft a)
+      A' (around-only lsft a)
+    )
+    ```
+
+    `@A'` is simply an uppercase letter but with the following difference to the `@A`:
+
+    P@A Pb R@A Rb -> AB
+    P@A' Pb R@A' Rb -> Ab
+
++ `around-when-alone`: similar to `around-only` but when all other buttons have been released
+    the outer button is repressed.
+
+    ```clojure
+    (defalias
+        A'' (around-when-alone lsft a)
+    )
+    ```
+
+    P@A'' Tb Tc R@A'' -> Plsft Pa Rlsft Tb Tlsft Tc Plsft Ra Rlsft
+
++ `around-implicit`: the around variant used implicit
+
+    ```closure
+    (defalias
+        =A (around-implicit lsft a)
+    )
+    ```
+
+    `@=A` is the desugared form of `A`
+
 + `around-next`: perform the next button-press inside some context (like
   `layer-next` but more generalized)
 
   ```clojure
   (defalias ns  (around-next sft))  ;; Shift the next press
   ```
+
++ `around-next-single`: perform only the next event (keypress or release)
+  inside some context.
+
++ `before-after-next`: tap a button prior to key press and tap another
+  after key release.
+  ```clojure
+  (before-after-next tab S-tab a)
+  ```
+
 + `around-next-timeout`: like `around-next` except that if other button press is not detected within
   some timeout, some other button is tapped.
 
   ```clojure
-  ntm (around-next-timeout 500 sft XX)
+  (around-next-timeout 500 sft XX)
   ```
-  
-+ `sticky keys`: act like the key is held temporarily after just one
+
++ `sticky-key`: act like the key is held temporarily after just one
   press for the given amount of time (in ms).
 
   ```clojure
   (defalias slc (sticky-key 500 lctl))
   ```
+
++ `stepped`: perform the next button in the circular sequence
+  whenever it is pressed.
+  ```clojure
+  (stepped (press-only lctl) (release-only lctl))
+  ```
+
+  This button:
+  - presses control the first time it is tapped
+  - releases control the second time it is tapped
+
 
 + `pause`: pause for the given number of ms.
 
@@ -205,7 +269,7 @@ The definition of a key chord then looks like this:
 
 ## Tap buttons
 
-Tap buttons are an integral part of kmonad. Everyone has different
+Tap buttons are an integral part of KMonad. Everyone has different
 preferences—that's why there are so many! Particularly when using
 home-row modifiers, you will find some of the more crazy seeming buttons
 to be the most comfortable.
@@ -285,8 +349,8 @@ to be the most comfortable.
   ```clojure
   (defalias thr (tap-hold-next-release 1000 a sft))
   ```
-  
-+ `tap-hold-next` and `tap-hold-next-release` can take an optional 
+
++ `tap-hold-next` and `tap-hold-next-release` can take an optional
   `:timeout-button` keyword to specify a button other than the
   hold button which should be held when the timeout expires.
 
@@ -307,6 +371,8 @@ just collections of keys.
   `defsrc` is very similar to a layer visually, it is not a one and will
   thus not be used as one! It only serves to define where the different
   keys are and what kind of layout kmonad is initially dealing with.
+  It also supports giving a name via `:name <my-source-name>` as the
+  first argument.
 
   For example, an ANSI 60% keyboard may be represented as:
 
@@ -327,6 +393,12 @@ just collections of keys.
 
    For example, defining a qwerty layer, as well as one for special
    symbols and numbers:
+
+   To use a named source block add `:source <my-source-name>` after
+   the layer name.
+
+   you can also overwrite the `implicit-around` setting by adding
+   `:implicit-around <setting>`.
 
   ```
   (deflayer qwerty

@@ -55,6 +55,7 @@ main = getCmd >>= runCmd
 -- 3. Maybe start KMonad
 runCmd :: Cmd -> IO ()
 runCmd c = do
+  hSetBuffering stdout LineBuffering
   o <- logOptionsHandle stdout False <&> setLogMinLevel (c^.logLvl)
   withLogFunc o $ \f -> runRIO f $ do
     cfg <- loadConfig c
@@ -79,7 +80,7 @@ initAppEnv cfg = do
   -- Wait a bit for the user to release the 'Return' key with which they started KMonad
   threadDelay $ fromIntegral (cfg^.startDelay) * 1000
 
-  -- Acquire the keysource and keysink
+  -- Acquire the key source and key sink
   snk <- using $ cfg^.keySinkDev
   src <- using $ cfg^.keySourceDev
 
@@ -99,6 +100,8 @@ initAppEnv cfg = do
   launch_ "emitter_proc" $ do
     e <- atomically . takeTMVar $ otv
     emitKey snk e
+    -- If delay is specified, wait for it
+    for_ (cfg^.keyOutDelay) $ threadDelay . (*1000) . fromIntegral
   -- emit e = view keySink >>= flip emitKey e
   pure $ AppEnv
     { _keAppCfg  = cfg

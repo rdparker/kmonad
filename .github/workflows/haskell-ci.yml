@@ -13,32 +13,29 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest
-            , macos-latest
-            # , windows-latest
-            ]
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
         resolver:
-          [ lts-16               # GHC 8.8
-          , lts-18               # GHC 8.10
-          , lts-19               # GHC 9.0
-          , lts-20               # GHC 9.2
-          , lts-21               # GHC 9.4
-          , nightly-2023-07-19   # GHC 9.6
-          ]
+          - lts-20               # GHC 9.2
+          - lts-21               # GHC 9.4
+          - lts-22               # GHC 9.6
+          - nightly-2024-07-05   # GHC 9.8
 
     steps:
       - name: Clone project
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Get ghc version for ${{ matrix.resolver }}
         shell: bash
         run: |
           GHCVER=$(curl -L https://www.stackage.org/${{ matrix.resolver }}/ghc-major-version)
           echo "Got $GHCVER"
-          echo "::set-output name=ghc::$GHCVER"
+          echo "ghc=$GHCVER" >> $GITHUB_OUTPUT
         id: ghc-version
 
-      - uses: haskell/actions/setup@v1
+      - uses: haskell-actions/setup@v2
         name: Setup GHC ${{ steps.ghc-version.outputs.ghc }}
         id: hs-setup
         with:
@@ -47,17 +44,17 @@ jobs:
 
       - name: Refresh caches once a month
         id: cache-date
-        # GHA writes caches on the first miss and then never updates them again;
+        # GHC writes caches on the first miss and then never updates them again;
         # force updating the cache at least once a month
         run: |
-          echo "::set-output name=date::$(date +%Y-%m)"
+          echo "date=$(date +%Y-%m)" >> $GITHUB_OUTPUT
 
       - name: Ensure STACK_ROOT exists on Windows
         if: runner.os == 'Windows'
         run: New-Item -ItemType directory -Path ${{ steps.hs-setup.outputs.stack-root }}
 
       - name: Cache Haskell package metadata
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: ${{ steps.hs-setup.outputs.stack-root }}/pantry
           key: stack-pantry-${{ runner.os }}-${{ steps.cache-date.outputs.date }}
@@ -65,7 +62,7 @@ jobs:
             stack-pantry-${{ runner.os }}-
 
       - name: Cache Haskell dependencies
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: |
             ${{ steps.hs-setup.outputs.stack-root }}/*
@@ -100,7 +97,6 @@ jobs:
             --fast --no-terminal \
             --resolver=${{ matrix.resolver }} --system-ghc \
             --flag kmonad:dext \
-            --extra-include-dirs=c_src/mac/Karabiner-DriverKit-VirtualHIDDevice/include/pqrs/karabiner/driverkit:c_src/mac/Karabiner-DriverKit-VirtualHIDDevice/src/Client/vendor/include
 
       - name: Build and test (macOS, kext)
         shell: bash
@@ -109,4 +105,4 @@ jobs:
           stack test \
             --fast --no-terminal \
             --resolver=${{ matrix.resolver }} --system-ghc \
-            --flag kmonad:kext --extra-include-dirs=c_src/mac/Karabiner-VirtualHIDDevice/dist/include
+            --flag kmonad:kext

@@ -20,6 +20,7 @@ module KMonad.Model.Button
   , HasButton(..)
   , onPress
   , onRelease
+  , onTap
   , mkButton
   , around
   , tapOn
@@ -39,6 +40,8 @@ module KMonad.Model.Button
 
   -- * Button combinators
   -- $combinators
+  , aroundOnly
+  , aroundWhenAlone
   , aroundNext
   , aroundNextTimeout
   , aroundNextSingle
@@ -54,6 +57,7 @@ module KMonad.Model.Button
   , tapNextPress
   , tapMacro
   , tapMacroRelease
+  , steppedButton
   , stickyKey
   )
 where
@@ -64,6 +68,7 @@ import KMonad.Model.Action
 import KMonad.Keyboard
 import KMonad.Util
 
+import qualified RIO.HashSet as S
 
 --------------------------------------------------------------------------------
 -- $but
@@ -72,11 +77,15 @@ import KMonad.Util
 -- 'Button' is essentially a collection of 2 different actions, 1 to perform on
 -- 'Press' and another on 'Release'.
 
--- | A 'Button' consists of two 'MonadK' actions, one to take when a press is
+-- | A 'Button' consists of three 'MonadK' actions, one to take when a press is
 -- registered from the OS, and another when a release is registered.
+-- With a third when both should happen in sequence. This will only be used
+-- by other button such as `tap-macro`.
+-- Use 'mkButton' instead of this constructor.
 data Button = Button
   { _pressAction   :: !Action -- ^ Action to take when pressed
   , _releaseAction :: !Action -- ^ Action to take when released
+  , _tapAction     :: !Action -- ^ Action to take when tapped as a sub button
   }
 makeClassy ''Button
 
@@ -87,7 +96,14 @@ makeClassy ''Button
 -- therefore can only rely on functionality from 'MonadK'. I.e. the actions must
 -- be pure 'MonadK'.
 mkButton :: AnyK () -> AnyK () -> Button
-mkButton a b = Button (Action a) (Action b)
+mkButton a b = mkButton' a b $ a *> b
+
+-- | Create a 'Button' out of a press, release action and tap action
+--
+-- The non standard tap action is useful when inside other buttons
+-- like `tap-macro`
+mkButton' :: AnyK () -> AnyK () -> AnyK () -> Button
+mkButton' a b c = Button (Action a) (Action b) (Action c)
 
 -- | Create a new button with only a 'Press' action
 onPress :: AnyK () -> Button
@@ -96,6 +112,13 @@ onPress p = mkButton p $ pure ()
 onRelease :: AnyK () -> Button
 onRelease = mkButton (pure ())
 
+onTap :: AnyK () -> Button
+onTap = mkButton' (pure ()) (pure ())
+
+-- | Like 'onPress' but with an alternative button to use for tapping
+onPress' :: Button -> AnyK () -> Button
+onPress' (Button{_tapAction = Action t}) p = mkButton' p (pure ()) t
+
 --------------------------------------------------------------------------------
 -- $running
 --
@@ -103,9 +126,7 @@ onRelease = mkButton (pure ())
 
 -- | Perform both the press and release of a button immediately
 tap :: MonadK m => Button -> m ()
-tap b = do
-  runAction $ b^.pressAction
-  runAction $ b^.releaseAction
+tap b = runAction $ b^.tapAction
 
 -- | Perform the press action of a Button and register its release callback.
 --
@@ -149,9 +170,10 @@ modded modder = around (emitB modder)
 
 -- | Create a button that toggles a layer on and off
 layerToggle :: LayerTag -> Button
-layerToggle t = mkButton
+layerToggle t = mkButton'
   (layerOp $ PushLayer t)
   (layerOp $ PopLayer  t)
+  (pure ())
 
 -- | Create a button that switches the base-layer on a press
 layerSwitch :: LayerTag -> Button
@@ -186,9 +208,69 @@ around ::
      Button -- ^ The outer 'Button'
   -> Button -- ^ The inner 'Button'
   -> Button -- ^ The resulting nested 'Button'
-around outer inner = Button
-  (Action (runAction (outer^.pressAction)   *> runAction (inner^.pressAction)))
-  (Action (runAction (inner^.releaseAction) *> runAction (outer^.releaseAction)))
+around outer inner = mkButton
+  (runAction (outer^.pressAction)   *> runAction (inner^.pressAction))
+  (runAction (inner^.releaseAction) *> runAction (outer^.releaseAction))
+
+-- | A variant of `around`, which releases its outer button when another key
+-- is pressed.
+aroundOnly ::
+     Button -- ^ The outer 'Button'
+  -> Button -- ^ The inner 'Button'
+  -> Button -- ^ The resulting nested 'Button'
+aroundOnly outer inner = onPress' (around outer inner) $ do
+  runAction $ outer^.pressAction
+  runAction $ inner^.pressAction
+  go =<< matchMy Release
+ where
+  go :: KeyPred -> AnyK ()
+  go isMyRelease = hookF InputHook $ \e ->
+    if
+      | isMyRelease e -> do
+        runAction $ inner^.releaseAction
+        runAction $ outer^.releaseAction
+        pure Catch
+      -- Another key is pressed, so release the modifier immediately.
+      | isPress e -> do
+        runAction $ outer^.releaseAction
+        await isMyRelease $ \_ -> do
+          runAction (inner^.releaseAction)
+          pure Catch
+        pure NoCatch
+      | otherwise ->
+        go isMyRelease $> NoCatch
+
+-- | A variant of `around-only` that represses its outer button when all other
+-- keys after it have been released.
+aroundWhenAlone ::
+     Button -- ^ The outer 'Button'
+  -> Button -- ^ The inner 'Button'
+  -> Button -- ^ The resulting nested 'Button'
+aroundWhenAlone outer inner = onPress' (around outer inner) $ do
+  runAction $ outer^.pressAction
+  runAction $ inner^.pressAction
+  go S.empty =<< matchMy Release
+  pure ()
+ where
+  go :: HashSet Keycode -> KeyPred -> AnyK ()
+  go pressed isMyRelease = hookF InputHook $ \e ->
+    if
+      | isMyRelease e -> do
+        runAction $ inner^.releaseAction
+        when (null pressed) . runAction $ outer^.releaseAction
+        pure Catch
+      | isPress e -> do
+        let pressed' = S.insert (e^.keycode) pressed
+        when (null pressed) . runAction $ outer^.releaseAction
+        go pressed' isMyRelease
+        pure NoCatch
+      | otherwise -> do -- some release
+        let pressed' = S.delete (e^.keycode) pressed
+        let shouldPressOuter = S.member (e^.keycode) pressed && null pressed'
+        inject e
+        when shouldPressOuter . after 3 . runAction $ outer^.pressAction
+        await isRelease $ \_ -> go pressed' isMyRelease $> NoCatch
+        pure Catch
 
 -- | A 'Button' that, once pressed, will surround the next button with another.
 --
@@ -244,14 +326,14 @@ tapOn ::
      Switch -- ^ Which 'Switch' should trigger the tap
   -> Button -- ^ The 'Button' to tap
   -> Button -- ^ The tapping 'Button'
-tapOn Press   b = mkButton (tap b)   (pure ())
-tapOn Release b = mkButton (pure ()) (tap b)
+tapOn Press   b = onPress $ tap b
+tapOn Release b = onRelease $ tap b
 
 -- | Create a 'Button' that performs a tap of one button if it is released
 -- within an interval. If the interval is exceeded, press the other button (and
 -- release it when a release is detected).
 tapHold :: Milliseconds -> Button -> Button -> Button
-tapHold ms t h = onPress $ withinHeld ms (matchMy Release)
+tapHold ms t h = onPress' t $ withinHeld ms (matchMy Release)
   (press h)                     -- If we catch timeout before release
   (const $ tap t $> Catch) -- If we catch release before timeout
 
@@ -259,7 +341,7 @@ tapHold ms t h = onPress $ withinHeld ms (matchMy Release)
 -- own release, or else switches to holding some other button if the next event
 -- is a different keypress.
 tapNext :: Button -> Button -> Button
-tapNext t h = onPress $ hookF InputHook $ \e -> do
+tapNext t h = onPress' t $ hookF InputHook $ \e -> do
   p <- matchMy Release
   if p e
     then tap t   $> Catch
@@ -296,7 +378,7 @@ beforeAfterNext b a = onPress $ do
 -- It does all of this while holding processing of other buttons, so time will
 -- get rolled back like a TapHold button.
 tapNextRelease :: Button -> Button -> Button
-tapNextRelease t h = onPress $ do
+tapNextRelease t h = onPress' t $ do
   hold True
   go []
   where
@@ -339,7 +421,7 @@ tapNextRelease t h = onPress $ do
 -- It does all of this while holding processing of other buttons, so time will
 -- get rolled back like a TapHold button.
 tapHoldNextRelease :: Milliseconds -> Button -> Button -> Maybe Button -> Button
-tapHoldNextRelease ms t h mtb = onPress $ do
+tapHoldNextRelease ms t h mtb = onPress' t $ do
   hold True
   go ms []
   where
@@ -373,7 +455,7 @@ tapHoldNextRelease ms t h mtb = onPress $ do
 -- 2. It is the press of some other button, we hold
 -- 3. It is the release of some other button, ignore.
 tapNextPress :: Button -> Button -> Button
-tapNextPress t h = onPress go
+tapNextPress t h = onPress' t go
   where
     go :: MonadK m => m ()
     go = hookF InputHook $ \e -> do
@@ -401,10 +483,14 @@ tapNextPress t h = onPress go
 -- into its list. The moment a delay is exceeded or immediately upon reaching
 -- the last button, that button is pressed.
 multiTap :: Button -> [(Milliseconds, Button)] -> Button
-multiTap l bs = onPress $ go bs
+multiTap l bs = onPress' tap' $ hold True *> go bs
   where
+    tap' = case bs of
+      []           -> l
+      ((_, b) : _) -> b
+
     go :: [(Milliseconds, Button)] -> AnyK ()
-    go []            = press l
+    go []            = press l *> hold False
     go ((ms, b):bs') = do
       -- This is a bit complicated. What we do is:
       -- 1.  We wait for an event
@@ -413,7 +499,7 @@ multiTap l bs = onPress $ go bs
       -- 2B. If we do detect the release of the key that triggered this action,
       --     we must now keep waiting to detect another press.
       -- 2C. If we detect another (unrelated) press event we cancel the
-      --     remaining of the multi-tap sequence and trigger a tap on the
+      --     remaining of the multi-tap sequence and trigger a hold on the
       --     current button of the sequence.
       -- 3A. After 2B, if we do not detect a press before the interval is up,
       --     we know a tap occurred, so we tap the current button and we are
@@ -427,30 +513,32 @@ multiTap l bs = onPress $ go bs
       let doNext pred onTimeout next ms = tHookF InputHook ms onTimeout $ \t -> do
             pr <- pred
             if | pr (t^.event)      -> next (ms - t^.elapsed) $> Catch
-               | isPress (t^.event) -> tap b                  $> NoCatch
-               | otherwise          -> pure NoCatch
+               | isPress (t^.event) -> onTimeout              $> NoCatch
+               | otherwise          -> hold False             $> NoCatch
       doNext (matchMy Release)
-             (press b)
-             (doNext (matchMy Press) (tap b) (\_ -> go bs'))
+             (press b *> hold False)
+             (doNext (matchMy Press) (tap b *> hold False) (\_ -> go bs'))
              ms
 
 -- | Create a 'Button' that performs a series of taps on press. Note that the
 -- last button is only released when the tapMacro itself is released.
 tapMacro :: [Button] -> Button
-tapMacro bs = onPress $ go bs
+tapMacro bs = mkButton' (go False bs) (pure ()) (go True bs)
   where
-    go []      = pure ()
-    go [b]     = press b
-    go (b:rst) = tap b >> go rst
+    go _ []      = pure ()
+    go False [b]     = press b
+    go True [b] = tap b
+    go forceTap (b:rst) = tap b >> go forceTap rst
 
 -- | Create a 'Button' that performs a series of taps on press,
 -- except for the last Button, which is tapped on release.
 tapMacroRelease :: [Button] -> Button
-tapMacroRelease bs = onPress $ go bs
+tapMacroRelease bs = mkButton' (go False bs) (pure ()) (go True bs)
   where
-    go []      = pure ()
-    go [b]     = awaitMy Release $ tap b >> pure Catch
-    go (b:rst) = tap b >> go rst
+    go _ []      = pure ()
+    go False [b]     = awaitMy Release $ tap b >> pure Catch
+    go True [b] = tap b
+    go forceTap (b:rst) = tap b >> go forceTap rst
 
 -- | Switch to a layer for a period of time, then automatically switch back
 layerDelay :: Milliseconds -> LayerTag -> Button
@@ -495,3 +583,16 @@ stickyKey ms b = onPress go
                *> inject (t^.event)
                *> after 3 (runAction $ b^.releaseAction)
                $> Catch)
+
+-- | Create a button that functions as a different button everything it is pushed
+--
+-- I.e: first it acts as the first button, then as the second, then as the
+-- third, and when finished rotates back to being the first button.
+steppedButton :: [Button] -> Button
+steppedButton bs = onPress $ go bs
+  where
+    go [] = undefined
+    go [b] = press b
+    go (b:bs') = do
+      press b
+      awaitMy Press $ go bs' $> Catch

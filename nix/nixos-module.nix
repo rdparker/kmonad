@@ -1,6 +1,7 @@
 { config, lib, pkgs, ... }:
 
 let
+  cfg-boot = config.boot.initrd.services.kmonad;
   cfg = config.services.kmonad;
 
   # Per-keyboard options:
@@ -8,6 +9,7 @@ let
     options = {
       name = lib.mkOption {
         type = lib.types.str;
+        default = name;
         example = "laptop-internal";
         description = "Keyboard name.";
       };
@@ -29,45 +31,49 @@ let
           Since KMonad runs as an unprivileged user, it may sometimes
           need extra permissions in order to read the keyboard device
           file.  If your keyboard's device file isn't in the input
-          group you'll need to list its group in this option.
+          group, you'll need to list its group in this option.
         '';
       };
 
       defcfg = {
         enable = lib.mkEnableOption ''
-          Automatically generate the defcfg block.
+          automatic generation of the defcfg block.
 
-          When this is option is set to true the config option for
-          this keyboard should not include a defcfg block.
+          When this is option is set to true, the config option for
+          this keyboard should not include a defcfg block
         '';
 
         compose = {
           key = lib.mkOption {
-            type = lib.types.nullOr lib.types.str;
+            type = lib.types.str;
             default = "ralt";
             description = "The (optional) compose key to use.";
           };
 
           delay = lib.mkOption {
-            type = lib.types.int;
-            default = 5;
+            type = lib.types.ints.unsigned;
+            default = 0;
+            example = 5;
             description = "The delay (in milliseconds) between compose key sequences.";
           };
         };
 
-        fallthrough = lib.mkEnableOption "Reemit unhandled key events.";
+        keySeqDelay = lib.mkOption {
+          type = lib.types.ints.unsigned;
+          default = 5;
+          example = 0;
+          description = "The delay (in milliseconds) between each key outputted event.";
+        };
 
-        allowCommands = lib.mkEnableOption "Allow keys to run shell commands.";
+        fallthrough = lib.mkEnableOption "reemitting unhandled key events";
+
+        allowCommands = lib.mkEnableOption "keys to run shell commands";
       };
 
       config = lib.mkOption {
         type = lib.types.lines;
         description = "Keyboard configuration.";
       };
-    };
-
-    config = {
-      name = lib.mkDefault name;
     };
   };
 
@@ -77,18 +83,16 @@ let
       (defcfg
         input  (device-file "${keyboard.device}")
         output (uinput-sink "kmonad-${keyboard.name}")
-    '' +
-    lib.optionalString (keyboard.defcfg.compose.key != null) ''
-      cmp-seq ${keyboard.defcfg.compose.key}
-      cmp-seq-delay ${toString keyboard.defcfg.compose.delay}
-    '' + ''
+        cmp-seq ${keyboard.defcfg.compose.key}
+        cmp-seq-delay ${toString keyboard.defcfg.compose.delay}
+        key-seq-delay ${toString keyboard.defcfg.keySeqDelay}
         fallthrough ${lib.boolToString keyboard.defcfg.fallthrough}
         allow-cmd ${lib.boolToString keyboard.defcfg.allowCommands}
       )
     '';
     in
     pkgs.writeTextFile {
-      name = "kmonad-${keyboard.name}.cfg";
+      name = "kmonad-${keyboard.name}.kbd";
       text = lib.optionalString keyboard.defcfg.enable (defcfg + "\n") + keyboard.config;
       checkPhase = "${cfg.package}/bin/kmonad -d $out";
     };
@@ -106,7 +110,7 @@ let
   };
 
   # Build a systemd service that starts KMonad:
-  mkService = keyboard:
+  mkService = in-initrd: keyboard:
     let
       cmd = [
         "${cfg.package}/bin/kmonad"
@@ -126,22 +130,36 @@ let
       value = {
         description = "KMonad for ${keyboard.device}";
         script = lib.escapeShellArgs cmd;
-        serviceConfig.Restart = "no";
-        serviceConfig.User = "kmonad";
-        serviceConfig.SupplementaryGroups = groups;
+        serviceConfig.Restart = "always";
+        serviceConfig.User = if in-initrd then null else "kmonad";
+        serviceConfig.SupplementaryGroups = if in-initrd then null else groups;
         serviceConfig.Nice = -20;
       };
     };
+
+  paths = builtins.listToAttrs (map mkPath (builtins.attrValues cfg.keyboards));
+  services = in-initrd: builtins.listToAttrs (map (mkService in-initrd) (builtins.attrValues cfg.keyboards));
 in
 {
-  options.services.kmonad = {
-    enable = lib.mkEnableOption "KMonad: An advanced keyboard manager.";
+  # Don't conflict with existing module in nixpkgs.
+  disabledModules = [ "services/hardware/kmonad.nix" ];
 
-    package = lib.mkOption {
-      type = lib.types.package;
-      default = pkgs.kmonad;
+  options.boot.initrd.services.kmonad.enable = lib.mkEnableOption "KMonad" // {
+    description = ''
+      *This will only be used when systemd is used in stage 1.*
+
+      Whether to enable KMonad: an advanced keyboard manager.
+
+      This requires `services.kmonad.enable` to be set.
+      All other config options are also taken from `services.kmonad`.
+    '';
+  };
+  options.services.kmonad = {
+    enable = lib.mkEnableOption "KMonad: an advanced keyboard manager";
+
+    package = lib.mkPackageOption pkgs "KMonad" {
+      default = "kmonad";
       example = "pkgs.haskellPackages.kmonad";
-      description = "The KMonad package to use.";
     };
 
     keyboards = lib.mkOption {
@@ -158,29 +176,52 @@ in
     };
   };
 
-  config = lib.mkIf cfg.enable {
-    environment.systemPackages = [ cfg.package ];
+  config = lib.mkMerge [
+    (lib.mkIf cfg.enable {
+      environment.systemPackages = [ cfg.package ];
 
-    users.groups.uinput = { };
-    users.groups.kmonad = { };
+      users.groups.uinput = { };
+      users.groups.kmonad = { };
 
-    users.users.kmonad = {
-      description = "KMonad system user.";
-      group = "kmonad";
-      isSystemUser = true;
-    };
+      users.users.kmonad = {
+        description = "KMonad system user";
+        group = "kmonad";
+        isSystemUser = true;
+      };
 
-    services.udev.extraRules = ''
-      # KMonad user access to /dev/uinput
-      KERNEL=="uinput", MODE="0660", GROUP="uinput", OPTIONS+="static_node=uinput"
-    '';
+      hardware.uinput.enable = true;
 
-    systemd.paths =
-      builtins.listToAttrs
-        (map mkPath (builtins.attrValues cfg.keyboards));
+      systemd.paths = paths;
+      systemd.services = services false;
+    })
+    (lib.mkIf cfg-boot.enable {
+      boot.initrd = {
+        systemd.storePaths = [ cfg.package ];
 
-    systemd.services =
-      builtins.listToAttrs
-        (map mkService (builtins.attrValues cfg.keyboards));
-  };
+        # Does not work, since `users.groups.uinput` does not specify a `gid`
+        # and this field isn't optional.
+        #systemd.groups.uinput = { };
+        #systemd.groups.kmonad = { };
+
+        # Same for users with `uid`.
+        #systemd.users.kmonad.group = "kmonad";
+        #services.udev.rules = ''
+        #  # KMonad user access to /dev/uinput
+        #  KERNEL=="uinput", MODE="0660", GROUP="uinput", OPTIONS+="static_node=uinput"
+        #'';
+
+        systemd.paths = paths;
+        systemd.services = services true;
+
+        availableKernelModules = [ "evdev" "uinput" ];
+      };
+    })
+    { assertions = [
+        {
+          assertion = cfg-boot.enable -> cfg.enable;
+          message = "To enable KMonad in the initrd, it must be enabled globally";
+        }
+      ];
+    }
+  ];
 }

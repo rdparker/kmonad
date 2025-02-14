@@ -27,6 +27,8 @@ module KMonad.Args.Parser
   -- * Parsers for Tokens and Buttons
   , otokens
   , itokens
+  , buttonP
+  , implArndButtons
   , keywordButtons
   , noKeywordButtons
   )
@@ -182,7 +184,7 @@ exprP = paren . choice $
 
 -- | Different ways to refer to shifted versions of keycodes
 shiftedNames :: [(Text, DefButton)]
-shiftedNames = let f = second $ \kc -> KAround (KEmit KeyLeftShift) (KEmit kc) in
+shiftedNames = let f = second $ \kc -> KAroundImplicit (KEmit KeyLeftShift) (KEmit kc) in
                  map f $ cps <> num <> oth <> lng
   where
     cps = zip (map T.singleton ['A'..'Z'])
@@ -200,7 +202,7 @@ shiftedNames = let f = second $ \kc -> KAround (KEmit KeyLeftShift) (KEmit kc) i
 buttonNames :: [(Text, DefButton)]
 buttonNames = shiftedNames <> escp <> util
   where
-    emitS c = KAround (KEmit KeyLeftShift) (KEmit c)
+    emitS c = KAroundImplicit (KEmit KeyLeftShift) (KEmit c)
     -- Escaped versions for reserved characters
     escp = [ ("\\(", emitS Key9), ("\\)", emitS Key0)
            , ("\\_", emitS KeyMinus), ("\\\\", KEmit KeyBackslash)]
@@ -212,7 +214,7 @@ buttonNames = shiftedNames <> escp <> util
 
 -- | Parse "X-b" style modded-sequences
 moddedP :: Parser DefButton
-moddedP = KAround <$> prfx <*> buttonP
+moddedP = KAroundImplicit <$> prfx <*> buttonP
   where mods = [ ("S-", KeyLeftShift), ("C-", KeyLeftCtrl)
                , ("A-", KeyLeftAlt),   ("M-", KeyLeftMeta)
                , ("RS-", KeyRightShift), ("RC-", KeyRightCtrl)
@@ -240,6 +242,7 @@ composeSeqP = do
 
   -- If matching, parse a button-sequence from the stored text
   case runParser (some buttonP) "" s of
+    -- Parse error never reaches the user. They simply get a message about an unexpected character.
     Left  _ -> fail "Could not parse compose sequence"
     Right b -> pure b
 
@@ -262,10 +265,11 @@ buttonP = (lexeme . choice . map try $
 -- @(keyword, how to parse the token)@
 keywordButtons :: [(Text, Parser DefButton)]
 keywordButtons =
-  [ ("around"         , KAround      <$> buttonP     <*> buttonP)
+  [ ("around-implicit", KAroundImplicit <$> buttonP <*> buttonP)
   , ("press-only"     , KPressOnly   <$> keycodeP)
   , ("release-only"   , KReleaseOnly <$> keycodeP)
   , ("multi-tap"      , KMultiTap    <$> timed       <*> buttonP)
+  , ("stepped"        , KStepped     <$> some buttonP)
   , ("tap-hold"       , KTapHold     <$> lexeme numP <*> buttonP <*> buttonP)
   , ("tap-hold-next"
     , KTapHoldNext <$> lexeme numP <*> buttonP <*> buttonP
@@ -287,6 +291,7 @@ keywordButtons =
   , ("layer-delay"    , KLayerDelay  <$> lexeme numP <*> lexeme word)
   , ("layer-next"     , KLayerNext   <$> lexeme word)
   , ("around-next"    , KAroundNext  <$> buttonP)
+  , ("around-next-single", KAroundNextSingle <$> buttonP)
   , ("before-after-next", KBeforeAfterNext <$> buttonP <*> buttonP)
   , ("around-next-timeout", KAroundNextTimeout <$> lexeme numP <*> buttonP <*> buttonP)
   , ("tap-macro"
@@ -294,12 +299,20 @@ keywordButtons =
   , ("tap-macro-release"
     , KTapMacroRelease <$> lexeme (some buttonP) <*> optional (keywordP "delay" numP))
   , ("cmd-button"     , KCommand     <$> lexeme textP <*> optional (lexeme textP))
-  , ("pause"          , KPause . fromIntegral <$> numP)
+  , ("pause"          , KPause . fromIntegral <$> lexeme numP)
   , ("sticky-key"     , KStickyKey   <$> lexeme numP <*> buttonP)
   ]
+  ++ map (\(nm,_,btn) -> (nm, btn <$> buttonP <*> buttonP)) implArndButtons
  where
   timed :: Parser [(Int, DefButton)]
   timed = many ((,) <$> lexeme numP <*> lexeme buttonP)
+
+implArndButtons :: [(Text, ImplArnd, DefButton -> DefButton -> DefButton)]
+implArndButtons = sortBy (flip compare `on` (T.length . view _1)) -- Prevents early return due to `around`
+  [ ("around"           , IAAround         , KAround)
+  , ("around-only"      , IAAroundOnly     , KAroundOnly)
+  , ("around-when-alone", IAAroundWhenAlone, KAroundWhenAlone)
+  ]
 
 -- | Parsers for buttons that do __not__ have a keyword at the start
 noKeywordButtons :: [Parser DefButton]
@@ -324,9 +337,9 @@ itokenP = choice $ map (try . uncurry statement) itokens
 -- | Input tokens to parse; the format is @(keyword, how to parse the token)@
 itokens :: [(Text, Parser IToken)]
 itokens =
-  [ ("device-file"   , KDeviceSource <$> (T.unpack <$> textP))
+  [ ("device-file"   , KDeviceSource <$> (T.unpack <$> lexeme textP))
   , ("low-level-hook", pure KLowLevelHookSource)
-  , ("iokit-name"    , KIOKitSource <$> optional textP)]
+  , ("iokit-name"    , KIOKitSource <$> optional (lexeme textP))]
 
 -- | Parse an output token
 otokenP :: Parser OToken
@@ -335,9 +348,15 @@ otokenP = choice $ map (try . uncurry statement) otokens
 -- | Output tokens to parse; the format is @(keyword, how to parse the token)@
 otokens :: [(Text, Parser OToken)]
 otokens =
-  [ ("uinput-sink"    , KUinputSink <$> lexeme textP <*> optional textP)
-  , ("send-event-sink", KSendEventSink <$> optional ((,) <$> lexeme numP <*> numP))
+  [ ("uinput-sink"    , KUinputSink <$> lexeme textP <*> optional (lexeme textP))
+  , ("send-event-sink", KSendEventSink <$> optional ((,) <$> lexeme numP <*> lexeme numP))
   , ("kext"           , pure KKextSink)]
+
+-- | Parse an impl arnd token
+implArndP :: Parser ImplArnd
+implArndP = lexeme . choice $
+  try (IADisabled <$ symbol "disabled")
+  : map (\(s, v, _) -> try $ v <$ symbol s) implArndButtons
 
 -- | Parse the DefCfg token
 defcfgP :: Parser DefSettings
@@ -350,10 +369,11 @@ settingP = let f s p = symbol s *> p in
     [ SIToken      <$> f "input"         itokenP
     , SOToken      <$> f "output"        otokenP
     , SCmpSeq      <$> f "cmp-seq"       buttonP
-    , SInitStr     <$> f "init"          textP
     , SFallThrough <$> f "fallthrough"   bool
     , SAllowCmd    <$> f "allow-cmd"     bool
     , SCmpSeqDelay <$> f "cmp-seq-delay" numP
+    , SKeySeqDelay <$> f "key-seq-delay" numP
+    , SImplArnd    <$> f "implicit-around" implArndP
     ])
 
 --------------------------------------------------------------------------------
@@ -367,10 +387,21 @@ defaliasP = many $ (,) <$> lexeme word <*> buttonP
 -- $defsrc
 
 defsrcP :: Parser DefSrc
-defsrcP = many $ lexeme keycodeP
-
+defsrcP =
+  DefSrc
+    <$> optional (keywordP "name" word)
+    <*> many (lexeme keycodeP)
 
 --------------------------------------------------------------------------------
 -- $deflayer
+
 deflayerP :: Parser DefLayer
-deflayerP = DefLayer <$> lexeme word <*> many (lexeme buttonP)
+deflayerP = DefLayer <$> lexeme word <*> many (lexeme layerSettingP)
+
+layerSettingP :: Parser DefLayerSetting
+layerSettingP =
+  lexeme . choice . map try $
+    [ LSrcName <$> keywordP "source" word
+    , LImplArnd <$> keywordP "implicit-around" implArndP
+    , LButton <$> buttonP
+    ]
